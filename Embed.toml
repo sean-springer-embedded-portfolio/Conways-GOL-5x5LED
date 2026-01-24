@@ -2,11 +2,11 @@
 chip = "nrf52833_xxAA"  # micro:bit V2
 
 [default.reset]
-halt_afterwards = true 
+halt_afterwards = false 
 
 [default.rtt]
 enabled = false 
 
 [default.gdb]
-enabled = true
+enabled = false
 
