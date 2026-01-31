@@ -45,9 +45,9 @@ const ROW_COUNT: usize = 5;
 type LEDState = [[u8; ROW_COUNT]; ROW_COUNT];
 /// Spec 1: 10 frames per second refresh rate (100ms)
 const REFRESH_RATE_MS: u32 = 100;
-/// Per Spec 5: a "dead" state waits 5 frames (500ms)
+/// Per Spec 5: a "dead" state waits 500ms
 const DEATH_RESET_RATE_MS: u32 = 500;
-/// Per Spec 4: a complement action can only occur 1 time per 5 frams (500ms)
+/// Per Spec 4: a complement action can only occur 1 time per 500ms
 const COMPLEMENT_RESET_RATE_MS: u32 = 500;
 
 /// ButtonPress Trait
@@ -137,33 +137,47 @@ fn complement_state(state: &mut LEDState) {
 ///
 /// The ResetTimer struct tracks a current loop count (multiple of the REFRESH_RATE_MS) and a
 /// total loop count (also a multiple of REFRESH_RATE_MS) to determine when a period of time has elapsed.
-struct ResetTimer {
+struct ResetTimer<T> {
+    btimer: Timer<T>,
     total: u32,
-    current: u32,
 }
 
 /// Implt ResetTimer
 ///
 /// Provides method to initalize the reset timer, reset its counting, update the clock,
 /// and check if the timer has expired
-impl ResetTimer {
+impl<T> ResetTimer<T>
+where
+    T: microbit::hal::timer::Instance,
+{
+    //timer can apparently count up to ~4000 seconds before overflow (~1hr)
+    const TICKS_PER_MS: u32 = 1_000_000 / 1_000;
+    const TIMER_START_CYCLES: u32 = !0; //~4 billion
+
     /// fn new(u32, u32) -> Self
     ///
-    /// Returns a new ResetTimer instance initialized to frames total seconds (the expiration time)
-    /// and initialized to a current start time. The start time will likely be set to 0 but can be set
-    /// to some other number (eg equal to frames) which can provide different inital poll behavior
-    fn new(frames: u32, start: u32) -> Self {
-        ResetTimer {
-            total: frames,
-            current: start,
+    /// Returns a new ResetTimer instance initialized to ms_total total milliseconds (the expiration time)
+    /// and initialized to a current start time. The timer will instantly begin so that it get's out of it's dual 
+    /// purpose 0 state. Use reset() to restart the timer
+    fn new(timer: Timer<T>, ms_total: u32) -> Self {
+        if ms_total >= 4_294_967 {
+            panic!("hw max timer duration is 4,294.967 seconds");
         }
+
+        let mut instance = ResetTimer {
+            btimer: timer,
+            total: ms_total,
+        };
+
+        instance.btimer.start(ResetTimer::<T>::TIMER_START_CYCLES);
+        instance
     }
 
     /// fn reset(&mut self)
     ///
     /// reset the timer to it's starting state (furthest from expired)
     fn reset(&mut self) {
-        self.current = 0;
+        self.btimer.start(ResetTimer::<T>::TIMER_START_CYCLES);
     }
 
     /// fn tick(&mut self, bool) -> bool
@@ -172,27 +186,23 @@ impl ResetTimer {
     /// has caused the timer to expire and false otherwise. If reset_if_finished is true,
     /// then the internal timer state will reset if this function returns true
     fn tick(&mut self, reset_if_finished: bool) -> bool {
-        self.current += 1;
-
-        // prevent possible overflow
-        if self.current > self.total {
-            self.current = self.total;
-        }
-
-        let is_done = self.current == self.total;
-
-        if is_done && reset_if_finished {
+        let is_finished = self.finished();
+        if is_finished && reset_if_finished {
             self.reset();
         }
 
-        is_done
+        is_finished
     }
 
     /// fn finsihed(&self) -> bool
     ///
     /// This method will return true if the timer has expired and false otherwise
     fn finished(&self) -> bool {
-        self.current == self.total
+        let cycles = self.btimer.read();
+        let ms = cycles / ResetTimer::<T>::TICKS_PER_MS;
+
+        //cycles == 0 means timer has expired (approx 1 hr elapsed)
+        ms >= self.total || cycles == 0
     }
 }
 
@@ -220,11 +230,8 @@ fn main() -> ! {
     let mut timer = Timer::new(board.TIMER0);
     let mut display = Display::new(board.display_pins);
     let mut random_gen = Rng::new(board.RNG); //hardware trigger
-    let mut reset_timer = ResetTimer::new(DEATH_RESET_RATE_MS / REFRESH_RATE_MS, 0);
-    let mut complement_timer = ResetTimer::new(
-        COMPLEMENT_RESET_RATE_MS / REFRESH_RATE_MS,
-        COMPLEMENT_RESET_RATE_MS / REFRESH_RATE_MS,
-    ); // initialized to a finished() == true state
+    let mut reset_timer = ResetTimer::new(Timer::new(board.TIMER1), DEATH_RESET_RATE_MS);
+    let mut complement_timer = ResetTimer::new(Timer::new(board.TIMER2), COMPLEMENT_RESET_RATE_MS); // initialized to a finished() == true state
 
     // Configure buttons
     let mut button_a = board.buttons.button_a;
@@ -242,13 +249,13 @@ fn main() -> ! {
         } else if button_b.pressed() {
             reset_timer.reset();
 
-            //Spec 4: If B btn pressed, complement state, then ignore B btn for 5 frames
+            //Spec 4: If B btn pressed, complement state, then ignore B btn for 500 ms
             if complement_timer.finished() {
                 complement_state(&mut state);
                 complement_timer.reset();
             }
         } else if life::done(&state) {
-            // Spec 5: if all cells "dead", count 5 frames. If no user input after 5 frames, randomize state
+            // Spec 5: if all cells "dead", count 500 ms. If no user input after 500 ms, randomize state
             if reset_timer.tick(true) {
                 randomize_state(&mut random_gen, &mut state);
             }
@@ -258,7 +265,7 @@ fn main() -> ! {
             life::life(&mut state);
         }
 
-        // tick complement_timer: at least 5 frames between complement action
+        // tick complement_timer: at least 500 ms between complement action
         complement_timer.tick(false);
     }
 }

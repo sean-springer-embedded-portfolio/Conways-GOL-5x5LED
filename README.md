@@ -24,7 +24,7 @@ The following list summarizes the UI and gameplay evolution as described above:
 2. The program begins with a random board
 3. While the A btn is pressed, the board will re-randomize with every frame
 4. If the B btn is pressed, the board is complemented (on->off and off->on) but there will be a 500ms cooldown period after each complement
-5. If all LEDs are off, the program will wait up to 5 frames (500ms) and, if no other btn is pressed, will re-randomize and continue
+5. If all LEDs are off, the program will wait up to 500ms and, if no other btn is pressed, will re-randomize and continue
 6. Otherwise, the standard GOL steps are taken with each frame (100ms)
 
 ## Mechanics
@@ -37,6 +37,9 @@ The state-flip (complement) action is implemented using a bit-wise-like `XOR` op
 
 The display state of the LEDs for each frame is perfomed using the BSP `display::blocking` module whereby the blocking display is lit
 for the **100ms** refresh rate.
+
+Three of the four microbit timers are used for this project. Timer0 is dedicated to the display, Timer1 is reserved for the reset timing, and
+Timer2 is used for the complent timing. Currently these are accessed via the microbit::hal crate.
 
 ## GOL Rules
 
